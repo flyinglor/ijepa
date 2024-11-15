@@ -1,0 +1,60 @@
+data:
+  dataset: hospital
+  num_classes: 3
+  batch_size: 8
+  color_jitter_strength: 0.0
+  crop_scale:
+  - 0.3
+  - 1.0
+  crop_size: 128
+  image_folder: imagenet_full_size/061417/
+  num_workers: 0
+  pin_mem: true
+  root_path: /dss/dsshome1/0C/ge79qex2/ModelsGenesis/dataset/238+19+72_tum_splits/
+  use_color_distortion: false
+  use_gaussian_blur: false
+  use_horizontal_flip: false
+  in_chans: 1
+logging:
+  folder: logs/vitb16-adni-atp-fe-ft-hos/
+  write_tag: jepa
+  disable_wandb: false
+mask:
+  allow_overlap: false
+  aspect_ratio:
+  - 1.0
+  - 1.0
+  enc_mask_scale:
+  - 0.85
+  - 1.0
+  min_keep: 1
+  num_enc_masks: 1
+  num_pred_masks: 4
+  patch_size: 16
+  pred_mask_scale:
+  - 0.15
+  - 0.2
+meta:
+  proj_name: ijepa
+  copy_data: false
+  load_checkpoint: true #load pretrained model or not
+  model_name: vit_base
+  pred_depth: 12
+  pred_emb_dim: 384
+  read_checkpoint: /dss/dsshome1/0C/ge79qex2/ijepa/logs/adni-jepa-ep1001.pth.tar
+  use_bfloat16: true
+  finetune: true
+  resume_checkpoint: false
+  pretrain_ds: adni
+optimization:
+  ema:
+  - 0.996
+  - 1.0
+  epochs: 1000
+  final_lr: 1.0e-06
+  final_weight_decay: 0.4
+  ipe_scale: 1.0
+  lr: 0.001
+  start_lr: 0.0001
+  warmup: 10
+  weight_decay: 0.05

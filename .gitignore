@@ -1,0 +1,25 @@
+# macOS Finder directory attributes
+.DS_Store
+
+# Visual Studio files
+.vscode/
+.history/
+*.code-workspace
+
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+dist/
+build/
+*.egg
+*.pyo
+
+
+# logs
+logs/
+
+
+# scripts
+scripts/
