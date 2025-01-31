@@ -47,7 +47,8 @@ from src.helper import (
     init_finetune_model,
     init_opt,
     load_checkpoint_ft,
-    init_opt_ft
+    init_opt_ft,
+    init_opt_atp
     )
 from src.transforms import make_transforms, make_transforms_adni
 from sklearn.metrics import accuracy_score, precision_score, recall_score, f1_score, balanced_accuracy_score
@@ -87,6 +88,8 @@ def main(args, resume_preempt=False):
     pred_emb_dim = args['meta']['pred_emb_dim']
     finetune = args['meta']['finetune']
     pretrain_ds = args['meta']['pretrain_ds']
+    freeze = args['meta']['freeze']
+    atp = args['meta']['atp']
     if not torch.cuda.is_available():
         device = torch.device('cpu')
     else:
@@ -158,7 +161,7 @@ def main(args, resume_preempt=False):
     if not is_initialized():
         init_process_group(
             backend='nccl',  # or 'gloo' depending on your setup
-            init_method='tcp://localhost:13147',  # environment variable-based initialization
+            init_method='tcp://localhost:13138',  # environment variable-based initialization
             world_size=world_size,
             rank=rank
         )
@@ -186,8 +189,9 @@ def main(args, resume_preempt=False):
         wandb_id = wandb.util.generate_id()
 
     if not disable_wandb:
+        # name=f"{model_name}_{pretrain_ds}_300_3fc_nfe_bs{batch_size}_ep{num_epochs}_lr{lr}", 
         run = wandb.init(project=f"{proj_name}_ft_{dataset}", 
-                        name=f"{model_name}_{pretrain_ds}_atp_nfe_bs{batch_size}_ep{num_epochs}_lr{lr}_5folds", 
+                        name=f"{model_name}_{pretrain_ds}_encoder+3fc_bs{batch_size}_ep{num_epochs}_lr{lr}", 
                         config=args,
                         id=wandb_id,
                         resume='allow',
@@ -345,32 +349,64 @@ def main(args, resume_preempt=False):
         encoder = DistributedDataParallel(encoder, static_graph=True)
         predictor = DistributedDataParallel(predictor, static_graph=True)
         target_encoder = DistributedDataParallel(target_encoder)
-        # encoder.eval()
+        
+        if freeze:
+            encoder.eval()
+            # freeze encoder
+            for p in encoder.parameters():
+                p.requires_grad = False
+        else: 
+            # defreeze encoder
+            for p in encoder.parameters():
+                p.requires_grad = True
 
-        #freeze encoder
-        # for p in encoder.parameters():
-        #     p.requires_grad = False
+        if not atp:
+            # init the finetune model
+            model = init_finetune_model(
+                device=device,
+                encoder=encoder,
+                # encoder=target_encoder,
+                num_classes=num_classes,
+                patch_size=patch_size, 
+                model_name=model_name,
+                crop_size=crop_size,
+                in_chans=in_chans,
+            )
 
-        # -- init classifier
-        classifier = AttentiveClassifier(
-            embed_dim=encoder.module.embed_dim,
-            num_heads=encoder.module.num_heads,
-            depth=1,
-            num_classes=num_classes
-        ).to(device)
+            # -- init optimizer and scheduler
+            optimizer, scaler, scheduler, wd_scheduler = init_opt_ft(
+                model=model,
+                wd=wd,
+                final_wd=final_wd,
+                start_lr=start_lr,
+                ref_lr=lr,
+                final_lr=final_lr,
+                iterations_per_epoch=ipe,
+                warmup=warmup,
+                num_epochs=num_epochs,
+                ipe_scale=ipe_scale,
+                use_bfloat16=use_bfloat16)
+        else:
+            # -- init classifier
+            classifier = AttentiveClassifier(
+                embed_dim=encoder.module.embed_dim,
+                num_heads=encoder.module.num_heads,
+                depth=1,
+                num_classes=num_classes
+            ).to(device)
 
-        # -- init optimizer and scheduler
-        optimizer, scaler, scheduler, wd_scheduler = init_opt_ft(
-            classifier=classifier,
-            wd=wd,
-            final_wd=final_wd,
-            start_lr=start_lr,
-            ref_lr=lr,
-            final_lr=final_lr,
-            iterations_per_epoch=ipe,
-            warmup=warmup,
-            num_epochs=num_epochs,
-            use_bfloat16=use_bfloat16)
+            optimizer, scaler, scheduler, wd_scheduler = init_opt_atp(
+                encoder=encoder,
+                classifier=classifier,
+                wd=wd,
+                final_wd=final_wd,
+                start_lr=start_lr,
+                ref_lr=lr,
+                final_lr=final_lr,
+                iterations_per_epoch=ipe,
+                warmup=warmup,
+                num_epochs=num_epochs,
+                use_bfloat16=use_bfloat16)
 
         # -- momentum schedule
         momentum_scheduler = (ema[0] + i*(ema[1]-ema[0])/(ipe*num_epochs*ipe_scale)
@@ -380,7 +416,7 @@ def main(args, resume_preempt=False):
         # -- load training checkpoint
         if load_model:
             #TODO: we only need the encoder for finetuning?
-            encoder, predictor, target_encoder, optimizer, scaler, _ = load_checkpoint_ft(
+            encoder, predictor, target_encoder, optimizer, scaler, _ = load_checkpoint(
                 device=device,
                 r_path=load_path,
                 encoder=encoder,
@@ -395,32 +431,36 @@ def main(args, resume_preempt=False):
             #     next(momentum_scheduler)
             #     mask_collator.step()
 
-        # init the finetune model
-        # model = init_finetune_model(
-        #     device=device,
-        #     encoder=encoder,
-        #     # encoder=target_encoder,
-        #     num_classes=num_classes,
-        #     patch_size=patch_size, 
-        #     model_name=model_name,
-        #     crop_size=crop_size,
-        #     in_chans=in_chans,
-        # )
+
         # optimizer = torch.optim.Adam(model.parameters(), lr=lr)
 
         #TODO: need a new save function
         def save_checkpoint(epoch, best=False):
-            save_dict = {
-                'encoder': encoder.state_dict(),
-                'classifier': classifier.state_dict(),
-                'opt': optimizer.state_dict(),
-                'scaler': None if scaler is None else scaler.state_dict(),
-                'epoch': epoch,
-                'loss': loss_meter.avg,
-                'batch_size': batch_size,
-                'world_size': world_size,
-                'lr': lr
-            }
+            if not atp:
+                save_dict = {
+                    # 'model': model.state_dict(),
+                    'encoder': encoder.state_dict(),
+                    'classifier': classifier.state_dict(),
+                    'opt': optimizer.state_dict(),
+                    'scaler': None if scaler is None else scaler.state_dict(),
+                    'epoch': epoch,
+                    'loss': loss_meter.avg,
+                    'batch_size': batch_size,
+                    'world_size': world_size,
+                    'lr': lr
+                }
+            else :
+                save_dict = {
+                    'model': model.state_dict(),
+                    'opt': optimizer.state_dict(),
+                    'scaler': None if scaler is None else scaler.state_dict(),
+                    'epoch': epoch,
+                    'loss': loss_meter.avg,
+                    'batch_size': batch_size,
+                    'world_size': world_size,
+                    'lr': lr
+                }
+
             if rank == 0:
                 # torch.save(save_dict, latest_path)
                 if best:
@@ -459,7 +499,11 @@ def main(args, resume_preempt=False):
             val_loss_meter = AverageMeter()
             time_meter = AverageMeter()
 
-            classifier.train(mode=training)
+            if atp:
+                classifier.train(mode=training)
+                encoder.train(mode=training)
+            else:
+                model.train(mode=training)
             criterion = torch.nn.CrossEntropyLoss()
             #
 
@@ -473,14 +517,15 @@ def main(args, resume_preempt=False):
                     # --
                     #TODO: change forward fucntion and loss_fn
                     # Step 1. Forward
-                    with torch.cuda.amp.autocast(dtype=torch.bfloat16, enabled=use_bfloat16):
-                        # outputs = F.softmax(model(imgs), dim=1)
-                        # loss = model.criterion(outputs, target)
-                        # with torch.no_grad():
-                        #     outputs = encoder(imgs)
-                        outputs = encoder(imgs)
-                        outputs = classifier(outputs)
-                    loss = criterion(outputs, target)
+                    if not atp:
+                        with torch.cuda.amp.autocast(dtype=torch.bfloat16, enabled=use_bfloat16):
+                            outputs = F.softmax(model(imgs), dim=1)
+                        loss = model.criterion(outputs, target)
+                    else: 
+                        with torch.cuda.amp.autocast(dtype=torch.bfloat16, enabled=use_bfloat16):
+                            outputs = encoder(imgs)
+                            outputs = F.softmax(classifier(outputs), dim=1)
+                        loss = criterion(outputs, target)
 
                     #  Step 2. Backward & step
                     if use_bfloat16:
@@ -541,19 +586,28 @@ def main(args, resume_preempt=False):
 
             #iterate over validation dataloader
             training = False
-            classifier.train(mode=training)
+            if atp:
+                classifier.train(mode=training)
+                encoder.train(mode=training)
+            else:
+                model.train(mode=training)
             for itr, batch_data in enumerate(validation_loader):
 
                 imgs = batch_data[0].to(device, non_blocking=True)
                 target = batch_data[1].to(device, non_blocking=True)
 
-                with torch.cuda.amp.autocast(dtype=torch.bfloat16, enabled=use_bfloat16):
-                    # outputs = F.softmax(model(imgs), dim=1)
-                    # loss = model.criterion(outputs, target)
-                    with torch.no_grad():
-                        outputs = encoder(imgs)
-                        outputs = classifier(outputs)
-                loss = criterion(outputs, target)    
+                if not atp:
+                    with torch.cuda.amp.autocast(dtype=torch.bfloat16, enabled=use_bfloat16):
+                        with torch.no_grad():
+                            outputs = F.softmax(model(imgs), dim=1)
+                    loss = model.criterion(outputs, target)
+                else: 
+                    with torch.cuda.amp.autocast(dtype=torch.bfloat16, enabled=use_bfloat16):
+                        with torch.no_grad():
+                            outputs = encoder(imgs)
+                            outputs = F.softmax(classifier(outputs), dim=1)
+                    loss = criterion(outputs, target)
+ 
                 val_loss_meter.update(float(loss))
 
                 assert not np.isnan(float(loss)), 'loss is nan'
@@ -568,16 +622,20 @@ def main(args, resume_preempt=False):
                     # step=niters,
                 )
 
-            if (epoch != 0) and (val_loss_meter.avg < best_validation_loss):
-                best_validation_loss=val_loss_meter.avg
-                save_checkpoint(epoch+1, best=True)
+            # if (epoch != 0) and (val_loss_meter.avg < best_validation_loss):
+            #     best_validation_loss=val_loss_meter.avg
+            #     save_checkpoint(epoch+1, best=True)
 
-            if (epoch + 1) % checkpoint_freq == 0:
-                save_checkpoint(epoch+1)
+            # if (epoch + 1) % checkpoint_freq == 0:
+            #     save_checkpoint(epoch+1)
         
         #TESTING
         Training=False
-        classifier.train(mode=training)
+        if atp:
+            classifier.train(mode=training)
+            encoder.train(mode=training)
+        else:
+            model.train(mode=training)
         test_losses = []
         predictions = []
         label_test = []
@@ -586,18 +644,21 @@ def main(args, resume_preempt=False):
             imgs = batch_data[0].to(device, non_blocking=True)
             target = batch_data[1].to(device, non_blocking=True)
 
-            with torch.cuda.amp.autocast(dtype=torch.bfloat16, enabled=use_bfloat16):
-                # outputs = F.softmax(model(imgs), dim=1)
-                # predictions.extend(torch.argmax(outputs, dim=1).tolist())
-                # label_test.extend(torch.argmax(target, dim=1).tolist())
-                # loss = model.criterion(outputs, target)
-                with torch.no_grad():
-                    outputs = encoder(imgs)
-                    outputs = classifier(outputs)
-                predictions.extend(torch.argmax(outputs, dim=1).tolist())
-                label_test.extend(torch.argmax(target, dim=1).tolist())
-
-            loss = criterion(outputs, target)    
+            if not atp:
+                with torch.cuda.amp.autocast(dtype=torch.bfloat16, enabled=use_bfloat16):
+                    with torch.no_grad():
+                        outputs = F.softmax(model(imgs), dim=1)
+                    predictions.extend(torch.argmax(outputs, dim=1).tolist())
+                    label_test.extend(torch.argmax(target, dim=1).tolist())
+                loss = model.criterion(outputs, target)
+            else: 
+                with torch.cuda.amp.autocast(dtype=torch.bfloat16, enabled=use_bfloat16):
+                    with torch.no_grad():
+                        outputs = encoder(imgs)
+                        outputs = F.softmax(classifier(outputs), dim=1)
+                    predictions.extend(torch.argmax(outputs, dim=1).tolist())
+                    label_test.extend(torch.argmax(target, dim=1).tolist())
+                loss = criterion(outputs, target)
             test_losses.append(float(loss))
 
         accuracy = accuracy_score(label_test, predictions)
@@ -619,6 +680,9 @@ def main(args, resume_preempt=False):
         log_string += f"===> Precision: {precision:.05f} \n "
         log_string += f"===> Recall: {recall:.05f} \n "
         log_string += f"===> F1-score: {f1:.05f} \n "
+        log_string += f"===> Predictions: {predictions} \n "
+        log_string += f"===> Labels: {label_test} \n "
+
 
         print(log_string)
     

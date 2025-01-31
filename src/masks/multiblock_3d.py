@@ -63,8 +63,8 @@ class MaskCollator(object):
         aspect_ratio = min_ar + _rand * (max_ar - min_ar)
         # -- Compute block height and width (given scale and aspect-ratio)
         h = int(round(math.pow(int(round(max_keep/(aspect_ratio**2))), 1/3)))
-        w = h * aspect_ratio
-        d = h * aspect_ratio
+        w = int(h * aspect_ratio)
+        d = int(h * aspect_ratio)
         while h >= self.height:
             h -= 1
         while w >= self.width:
@@ -105,12 +105,20 @@ class MaskCollator(object):
             mask = torch.zeros((self.depth, self.height, self.width), dtype=torch.int32)
             mask[top:top + h, left:left + w, front:front + d] = 1
 
+            # print("mask before acceptable region: ", mask)
+
             # -- Constrain mask to a set of acceptable regions
             if acceptable_regions is not None:
                 constrain_mask(mask, tries)
 
+            # print("mask before acceptable region: ", mask)
+
+
             # -- Flatten the mask and check validity
             mask_flat = torch.nonzero(mask.flatten())
+
+            # print("mask_flat: ", mask_flat)
+
             valid_mask = len(mask_flat) > self.min_keep
 
             if not valid_mask:
@@ -121,7 +129,8 @@ class MaskCollator(object):
                     logger.warning(f'Mask generator says: "Valid mask not found, decreasing acceptable-regions [{tries}]"')
 
         mask_flat = mask_flat.squeeze()
-
+        
+        # print("mask_flat after squeeze: ", mask_flat)
         # -- Create complement of the mask
         mask_complement = torch.ones((self.height, self.width, self.depth), dtype=torch.int32)
         mask_complement[top:top + h, left:left + w, front:front + d] = 0
@@ -149,10 +158,12 @@ class MaskCollator(object):
             generator=g,
             scale=self.pred_mask_scale,
             aspect_ratio_scale=self.aspect_ratio)
+        # print("p_size: ", p_size)
         e_size = self._sample_block_size(
             generator=g,
             scale=self.enc_mask_scale,
             aspect_ratio_scale=(1., 1.))
+        # print("e_size: ", e_size)
 
         collated_masks_pred, collated_masks_enc = [], []
         min_keep_pred = self.height * self.width * self.depth

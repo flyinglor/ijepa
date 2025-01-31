@@ -29,7 +29,7 @@ import torch.multiprocessing as mp
 import torch.nn.functional as F
 from torch.nn.parallel import DistributedDataParallel
 
-from src.masks.multiblock import MaskCollator as MBMaskCollator
+from src.masks.multiblock_3d import MaskCollator as MBMaskCollator
 from src.masks.utils import apply_masks
 from src.utils.distributed import (
     init_distributed,
@@ -132,7 +132,7 @@ def main(args, resume_preempt=False):
     tag = args['logging']['write_tag']
     disable_wandb = args['logging']['disable_wandb']
 
-    checkpoint_freq = 500
+    checkpoint_freq = 99
 
     if not os.path.exists(folder):
         os.makedirs(folder)
@@ -173,7 +173,7 @@ def main(args, resume_preempt=False):
         wandb_id = wandb.util.generate_id()
 
     run = wandb.init(project=f"{proj_name}_{dataset}", 
-                    name=f"{model_name}_bs{batch_size}_ep{num_epochs}_context7/8", 
+                    name=f"{model_name}_bs{batch_size}_lr{lr}_ep{num_epochs}_patch7-2", 
                     config=args,
                     id=wandb_id,
                     resume='allow',
@@ -559,8 +559,8 @@ def main(args, resume_preempt=False):
             best_validation_loss=val_loss_meter.avg
             save_checkpoint(epoch+1, best=True)
         
-        if (epoch + 1) == 300 or (epoch + 1) == 600:
-            save_checkpoint(epoch+1)
+        # if (epoch + 1) == 300 or (epoch + 1) == 600:
+        #     save_checkpoint(epoch+1)
 
         if (epoch + 1) % checkpoint_freq == 0:
             save_checkpoint(epoch+1)

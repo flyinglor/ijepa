@@ -15,7 +15,7 @@ data:
   use_horizontal_flip: false
   in_chans: 1
 logging:
-  folder: logs/vitb16-adni-ep.1000/
+  folder: logs/vitb16-adni-lr5e4-ep.1000/
   write_tag: jepa
   disable_wandb: false
 mask:
@@ -30,9 +30,9 @@ mask:
   num_enc_masks: 1
   num_pred_masks: 4
   patch_size: 16
-  pred_mask_scale:
-  - 0.15
-  - 0.2
+  pred_mask_scale: #2 patches
+  - 0.015
+  - 0.02
 meta:
   proj_name: ijepa
   copy_data: false
@@ -50,7 +50,7 @@ optimization:
   final_lr: 1.0e-06
   final_weight_decay: 0.4
   ipe_scale: 1.0
-  lr: 0.001
-  start_lr: 0.0002
+  lr: 0.0005
+  start_lr: 0.0001
   warmup: 40
   weight_decay: 0.04

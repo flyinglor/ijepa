@@ -25,9 +25,10 @@ def make_adni(
     training=True,
     copy_data=False,
     drop_last=True,
-    subset_file=None
+    subset_file=None,
+    test=False
 ):
-    dataset = get_adni_dataset(root_path, train=training, train_transform=transform)
+    dataset = get_adni_dataset(root_path, train=training, train_transform=transform, test=test)
 
     # if subset_file is not None:
     #     dataset = ImageNetSubset(dataset, subset_file)
@@ -229,14 +230,17 @@ def get_ukb_dataset(root_path, train=True, train_transform=None):
     train_set = CustomImageDataset(image_train, label_train)
     return train_set
 
-def get_adni_dataset(root_path, train=True, train_transform=None):
+def get_adni_dataset(root_path, train=True, train_transform=None, test=False):
     suffix = 'train.h5' if train else 'valid.h5'
     data_dir = os.path.join(root_path, suffix)
     diagnosis = []
     image_train = []
     label_train = []
+    i = 0
     with h5py.File(data_dir, mode='r') as file:
         for name, group in file.items():
+            if test and i >= 16:
+                break
             if name == "stats":
                 continue
             rid = group.attrs['RID']
@@ -255,6 +259,7 @@ def get_adni_dataset(root_path, train=True, train_transform=None):
             diagnosis.append(group.attrs['DX'])
             image_train.append(transformed_image)
             label_train.append(group.attrs['DX'])
+            i += 1
 
     OH_encoder = OneHotEncoder(handle_unknown='ignore', sparse_output=False)
     OH_encoder.fit(np.array(diagnosis).reshape(-1, 1))

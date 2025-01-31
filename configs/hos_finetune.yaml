@@ -16,7 +16,7 @@ data:
   use_horizontal_flip: false
   in_chans: 1
 logging:
-  folder: logs/vitb16-adni-atp-fe-ft-hos/
+  folder: logs/vitb16-ukb-atp-ft-hos/
   write_tag: jepa
   disable_wandb: false
 mask:
@@ -37,15 +37,19 @@ mask:
 meta:
   proj_name: ijepa
   copy_data: false
-  load_checkpoint: true #load pretrained model or not
+  load_checkpoint: false #load pretrained model or not
   model_name: vit_base
   pred_depth: 12
   pred_emb_dim: 384
-  read_checkpoint: /dss/dsshome1/0C/ge79qex2/ijepa/logs/adni-jepa-ep1001.pth.tar
   use_bfloat16: true
   finetune: true
   resume_checkpoint: false
-  pretrain_ds: adni
+  freeze: false
+  atp: false
+  # pretrain_ds: adni
+  # read_checkpoint: /dss/dsshome1/0C/ge79qex2/ijepa/logs/adni-jepa-ep1001.pth.tar
+  pretrain_ds: ukb
+  read_checkpoint: /dss/dsshome1/0C/ge79qex2/ijepa/logs/vitb16-ukb-ep.1000/jepa-ep298.pth.tar
 optimization:
   ema:
   - 0.996
@@ -54,7 +58,7 @@ optimization:
   final_lr: 1.0e-06
   final_weight_decay: 0.4
   ipe_scale: 1.0
-  lr: 0.001
-  start_lr: 0.0001
+  lr: 0.00005
+  start_lr: 0.00001
   warmup: 10
   weight_decay: 0.05
